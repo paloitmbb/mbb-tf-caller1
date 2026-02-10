@@ -1,0 +1,324 @@
+# PR Validation & Security Check - Validates, scans, and plans Terraform changes on pull requests
+# Triggers: PR to main/develop with Terraform file changes
+# Includes: validation (fmt, validate, tflint), security scans (tfsec, Checkov, Trivy), plan generation, and artifact upload
+
+name: PR Security Check
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'env/**'
+      - 'modules/**'
+      - '**.tf'
+      - '**.tfvars'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to scan'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: 'dev'
+      severity:
+        description: 'Minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'HIGH'
+
+concurrency:
+  group: pr-security-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  actions: read
+
+jobs:
+  # Determine target environment from changed paths
+  prepare:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      working-directory: ${{ steps.env.outputs.working-directory }}
+    
+    steps:
+      # ===== OLD APPROACH: Branch-based detection (deprecated) =====
+      # - name: Determine Environment
+      #   id: set-env
+      #   run: |
+      #     # For manual dispatch, use the selected environment
+      #     if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+      #       ENV="${{ github.event.inputs.environment }}"
+      #     # For PRs, determine environment based on target branch
+      #     elif [ "${{ github.base_ref }}" == "main" ]; then
+      #       ENV="prod"
+      #     elif [ "${{ github.base_ref }}" == "develop" ]; then
+      #       ENV="stage"
+      #     else
+      #       ENV="dev"
+      #     fi
+      #     
+      #     echo "environment=${ENV}" >> $GITHUB_OUTPUT
+      #     echo "working-directory=./env/${ENV}" >> $GITHUB_OUTPUT
+      #     echo "🌍 Environment: ${ENV}"
+      #     echo "📁 Directory: ./env/${ENV}"
+      
+      # ===== NEW APPROACH: Path-based detection via composite action =====
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for path filtering
+      
+      - name: Detect Environment
+        id: env
+        uses: paloitmbb/mbb-tf-actions/actions/determine-environment@main
+        with:
+          manual-environment: ${{ inputs.environment || '' }}
+          base-ref: ${{ github.base_ref || 'main' }}
+
+  # Run validation, security scans, and generate Terraform plan
+  validate-and-plan:
+    name: Validate & Plan (${{ needs.prepare.outputs.environment }})
+    needs: prepare
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      actions: read
+      id-token: write
+      attestations: write
+      issues: write
+    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@main
+    with:
+      terraform-version: '1.7.0'
+      working-directory: ${{ needs.prepare.outputs.working-directory }}
+      environment: ${{ needs.prepare.outputs.environment }}
+      enable-tfsec: true
+      tfsec-severity: ${{ inputs.severity || 'HIGH' }}
+      enable-checkov: true
+      enable-trivy: true
+      checkov-severity: ${{ inputs.severity || 'HIGH' }}
+      trivy-severity: ${{ inputs.severity || 'HIGH' }}
+      terraform-var-file: 'terraform.tfvars'
+      runner-os: 'ubuntu-latest'
+      timeout-minutes: 60
+    
+    # Pass secrets required by the reusable workflow
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # Post validation, security, and plan results as PR comment
+  comment-pr:
+    name: Comment PR Results
+    needs: [prepare, validate-and-plan]
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Comment Plan on PR
+        if: needs.validate-and-plan.outputs.plan-exitcode != '0'
+        uses: paloitmbb/mbb-tf-actions/actions/pr-comment-plan@main
+        with:
+          working-directory: ${{ needs.prepare.outputs.working-directory }}
+          environment: ${{ needs.prepare.outputs.environment }}
+          terraform-version: ${{ needs.validate-and-plan.outputs.terraform-version }}
+          plan-hash: ${{ needs.validate-and-plan.outputs.plan-hash }}
+          plan-exitcode: ${{ needs.validate-and-plan.outputs.plan-exitcode }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Post Security Results
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const allPassed = '${{ needs.validate-and-plan.outputs.security-all-passed }}';
+            const tfsecStatus = '${{ needs.validate-and-plan.outputs.tfsec-status }}';
+            const checkovStatus = '${{ needs.validate-and-plan.outputs.checkov-status }}';
+            const trivyStatus = '${{ needs.validate-and-plan.outputs.trivy-status }}';
+            const planExitCode = '${{ needs.validate-and-plan.outputs.plan-exitcode }}';
+            const planArtifact = '${{ needs.validate-and-plan.outputs.plan-artifact-name }}';
+            const planHash = '${{ needs.validate-and-plan.outputs.plan-hash }}';
+            const environment = '${{ needs.prepare.outputs.environment }}';
+            const workingDir = '${{ needs.prepare.outputs.working-directory }}';
+            
+            const getStatusEmoji = (status) => {
+              if (status === 'success') return '✅';
+              if (status === 'failure') return '❌';
+              return '⏭️';
+            };
+            
+            const getStatusText = (status) => {
+              if (status === 'success') return 'Passed';
+              if (status === 'failure') return 'Failed';
+              return 'Skipped';
+            };
+            
+            const getPlanStatus = (exitCode) => {
+              if (exitCode === '0') return '✅ No changes';
+              if (exitCode === '2') return '⚠️ Changes detected';
+              return '❓ Unknown';
+            };
+            
+            const overallStatus = allPassed === 'true' ? '✅ PASSED' : '❌ FAILED';
+            
+            const body = `## 🚀 Terraform PR Validation Results
+            
+            **Environment:** \`${environment}\`
+            **Working Directory:** \`${workingDir}\`
+            
+            ### 📋 Terraform Plan Summary
+            
+            | Item | Status |
+            |------|--------|
+            | **Plan Status** | ${getPlanStatus(planExitCode)} |
+            | **Plan Artifact** | \`${planArtifact}\` |
+            | **Plan Hash** | \`${planHash.substring(0, 12)}...\` |
+            
+            ${planExitCode === '2' ? '⚠️ **Infrastructure changes detected!** Review the plan carefully before merging.' : ''}
+            ${planExitCode === '0' ? '✅ **No infrastructure changes** - Configuration matches current state.' : ''}
+            
+            <details>
+            <summary>📦 Download Plan Artifact</summary>
+            
+            The Terraform plan has been uploaded as a workflow artifact and can be downloaded from the [workflow run](${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).
+            
+            **Artifact Name:** \`${planArtifact}\`  
+            **SHA256 Hash:** \`${planHash}\`
+            
+            </details>
+            
+            ---
+            
+            ### 🔒 Security Scan Results
+            
+            | Tool | Status | Description |
+            |---------|--------|-------------|
+            | � **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | Terraform static analysis security scanner |
+            | �🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | Infrastructure as Code policy checks |
+            | 🔍 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | Vulnerability and misconfiguration scanning |
+            
+            ### Overall Status: ${overallStatus}
+            
+            ---
+            
+            ${allPassed === 'true' 
+              ? '✅ **All security checks passed!** This PR meets security requirements and is safe to merge.'
+              : '❌ **Security issues detected!** Please review the findings and fix them before merging.'}
+            
+            <details>
+            <summary>📋 View Detailed Findings</summary>
+            
+            ### Where to find detailed results:
+            
+            1. **GitHub Security Tab**: [View Code Scanning Alerts](${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/security/code-scanning)
+               - SARIF files from tfsec, Checkov, and Trivy are uploaded here
+               - Filter by tool to see specific findings
+            
+            2. **Workflow Run**: Check the workflow logs for detailed output
+            
+            3. **Job Summary**: See the workflow summary for a quick overview
+            
+            ### Scans Performed:
+            - � **tfsec**: Terraform-specific static analysis for security issues
+            - �🛡️ **Checkov**: Scans Terraform code for security misconfigurations and compliance violations
+            - 🔍 **Trivy**: Scans for vulnerabilities in IaC configurations and dependencies
+            
+            ### Severity Threshold: \`${{ github.event.inputs.severity || 'HIGH' }}\`
+            
+            </details>
+            
+            ---
+            *🤖 Automated validation & security via [reusable-tf-ci.yml](https://github.com/paloitmbb/mbb-tf-workflows)*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Final validation gate - blocks merge if validation, security, or plan fails
+  security-gate:
+    name: Validation Gate
+    needs: validate-and-plan
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Check Validation Results
+        run: |
+          echo "🚦 Validation Gate Check"
+          
+          ALL_PASSED="${{ needs.validate-and-plan.outputs.security-all-passed }}"
+          TFSEC_STATUS="${{ needs.validate-and-plan.outputs.tfsec-status }}"
+          CHECKOV_STATUS="${{ needs.validate-and-plan.outputs.checkov-status }}"
+          TRIVY_STATUS="${{ needs.validate-and-plan.outputs.trivy-status }}"
+          PLAN_EXITCODE="${{ needs.validate-and-plan.outputs.plan-exitcode }}"
+          PLAN_HASH="${{ needs.validate-and-plan.outputs.plan-hash }}"
+          echo "tfsec: ${TFSEC_STATUS}"
+          echo "Checkov: ${CHECKOV_STATUS}"
+          echo "Trivy: ${TRIVY_STATUS}"
+          echo "Plan Exit Code: ${PLAN_EXITCODE}"
+          echo "Plan Hash: ${PLAN_HASH:0:12}..."
+          echo "Overall: ${ALL_PASSED}"
+          
+          # Validate plan was generated
+          if [ -z "${PLAN_HASH}" ]; then
+            echo "❌ Plan hash is missing - plan generation may have failed"
+            exit 1
+          fi
+          
+          if [ "${ALL_PASSED}" == "true" ]; then
+            echo "✅ All validation and security checks PASSED - PR can be merged"
+            echo "📊 SARIF uploaded to Security tab"
+            echo "📦 Plan artifact ready for deployment"
+            exit 0
+          else
+            echo "❌ Validation or security checks FAILED - Fix issues before merging"
+            echo "📊 Review SARIF findings in Security tab"
+            exit 1
+          fi
+      
+      - name: Generate Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🚦 Validation Gate Result
+          
+          | Check | Status |
+          |-------|--------|
+          | **Terraform Plan** | ${{ needs.validate-and-plan.outputs.plan-exitcode == '0' && '✅ No changes' || needs.validate-and-plan.outputs.plan-exitcode == '2' && '⚠️ Changes detected' || '❓ Unknown' }} |
+          | **tfsec** | ${{ needs.validate-and-plan.outputs.tfsec-status == 'success' && '✅ Passed' || '❌ Failed/Skipped' }} |
+          | **Checkov** | ${{ needs.validate-and-plan.outputs.checkov-status == 'success' && '✅ Passed' || '❌ Failed/Skipped' }} |
+          | **Trivy** | ${{ needs.validate-and-plan.outputs.trivy-status == 'success' && '✅ Passed' || '❌ Failed/Skipped' }} |
+          | **Overall** | ${{ needs.validate-and-plan.outputs.security-all-passed == 'true' && '✅ PASSED' || '❌ FAILED' }} |
+          
+          ### 📊 Results & Artifacts
+          
+          - **SARIF Reports:** Security scan results uploaded to [Code Scanning Alerts →](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)
+          - **Plan Artifact:** `${{ needs.validate-and-plan.outputs.plan-artifact-name }}`
+          - **Plan Hash:** `${{ needs.validate-and-plan.outputs.plan-hash }}`
+          
+          ---
+          ${{ needs.validate-and-plan.outputs.security-all-passed == 'true' && '✅ **PR approved - validation and security checks passed**' || '❌ **Fix issues before merging**' }}
+          EOF

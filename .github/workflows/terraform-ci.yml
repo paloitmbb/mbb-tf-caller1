@@ -1,0 +1,155 @@
+name: Terraform CI Workflow
+
+# Validates, scans, and plans Terraform infrastructure changes
+# Triggers: Push/PR to main/develop, manual dispatch
+# Includes: Validation, tflint, tfsec, Checkov, Trivy, and plan generation
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'env/**'
+      - 'modules/**'
+      - '.github/workflows/*.yml'
+    
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to validate'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: 'dev'
+
+# Prevent concurrent runs
+concurrency:
+  group: terraform-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+# Permissions for OIDC and security scanning
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  # Determine target environment based on changed paths
+  prepare:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      working-directory: ${{ steps.env.outputs.working-directory }}
+    
+    steps:
+      # ===== OLD APPROACH: Branch-based detection (deprecated) =====
+      # - name: Determine Environment
+      #   id: set-env
+      #   run: |
+      #     if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+      #       ENV="${{ github.event.inputs.environment }}"
+      #     elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+      #       ENV="prod"
+      #     elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+      #       ENV="stage"
+      #     else
+      #       ENV="dev"
+      #     fi
+      #     
+      #     echo "environment=${ENV}" >> $GITHUB_OUTPUT
+      #     echo "working-directory=./env/${ENV}" >> $GITHUB_OUTPUT
+      #     echo "🌍 Environment: ${ENV}"
+      #     echo "📁 Working Directory: ./env/${ENV}"
+      
+      # ===== NEW APPROACH: Path-based detection via composite action =====
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for path filtering
+      
+      - name: Detect Environment
+        id: env
+        uses: paloitmbb/mbb-tf-actions/actions/determine-environment@main
+        with:
+          manual-environment: ${{ inputs.environment || '' }}
+          fallback-environment: 'dev'
+
+  # Run validation, security scans, and terraform plan
+  validate-and-plan:
+    name: Validate & Plan (${{ needs.prepare.outputs.environment }})
+    needs: prepare
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+      pull-requests: write
+      issues: write
+      attestations: write
+      actions: read
+    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@main
+    with:
+      terraform-version: '1.7.0'
+      working-directory: ${{ needs.prepare.outputs.working-directory || './env/dev' }}
+      environment: ${{ needs.prepare.outputs.environment }}
+      # Code Quality Scanning
+      enable-tflint: true
+      tflint-version: 'v0.60.0'
+      # Security Scanning
+      enable-tfsec: true
+      tfsec-severity: 'HIGH'
+      enable-checkov: true
+      enable-trivy: true
+      checkov-severity: 'CRITICAL'
+      trivy-severity: 'MEDIUM'
+      # Terraform Configuration
+      terraform-var-file: 'terraform.tfvars'
+      runner-os: 'ubuntu-latest'
+      timeout-minutes: 60
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  # Generate workflow summary with results
+  results:
+    name: Workflow Results
+    needs: [prepare, validate-and-plan]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "## 🚀 Terraform CI Workflow Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ needs.prepare.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Working Directory | ${{ needs.prepare.outputs.working-directory }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Plan Exit Code | ${{ needs.validate-and-plan.outputs.plan-exitcode }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scans | ${{ needs.validate-and-plan.outputs.security-all-passed && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.validate-and-plan.outputs.plan-exitcode }}" == "2" ]; then
+            echo "### ⚠️ Changes Detected" >> $GITHUB_STEP_SUMMARY
+            echo "Terraform plan contains infrastructure changes that need review." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.validate-and-plan.outputs.plan-exitcode }}" == "0" ]; then
+            echo "### ✅ No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "Infrastructure is up-to-date with the Terraform configuration." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Plan Artifact: \`${{ needs.validate-and-plan.outputs.plan-artifact-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "🔐 Plan Hash: \`${{ needs.validate-and-plan.outputs.plan-hash }}\`" >> $GITHUB_STEP_SUMMARY
+
+
+
+
