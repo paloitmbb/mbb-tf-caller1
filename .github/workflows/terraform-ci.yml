@@ -93,7 +93,7 @@ jobs:
       issues: write
       attestations: write
       actions: read
-    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@main
+    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@d700f75f54e168e153f7d9557c50c3ec1fec1532
     with:
       terraform-version: '1.7.0'
       working-directory: ${{ needs.prepare.outputs.working-directory || './env/dev' }}
@@ -108,6 +108,11 @@ jobs:
       enable-trivy: true
       checkov-severity: 'CRITICAL'
       trivy-severity: 'MEDIUM'
+      # Continue-on-error Control
+      tfsec-continue-on-error: true
+      checkov-continue-on-error: true
+      trivy-continue-on-error: true
+      aggregate-continue-on-error: false  # Fail workflow if security scans fail
       # Terraform Configuration
       terraform-var-file: 'terraform.tfvars'
       runner-os: 'ubuntu-latest'
