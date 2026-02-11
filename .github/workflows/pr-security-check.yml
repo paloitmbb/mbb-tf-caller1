@@ -3,7 +3,7 @@
 # ============================================================================
 #
 # Purpose: Validates Terraform code and runs security scans on pull requests
-#          without requiring Azure credentials or generating plans.
+#          with plan preview generation using Azure OIDC authentication.
 #
 # Triggers:
 #   - pull_request: main/develop branches with Terraform file changes
@@ -16,15 +16,21 @@
 #   4. COMMENT-PR → Post comprehensive results to PR
 #
 # Architecture: Two-stage workflow pattern
-#   - Stage 1 (This workflow): Security validation only, no Azure access
-#   - Stage 2 (terraform-ci.yml): Plan generation post-merge with Azure auth
+#   - Stage 1 (This workflow): Security validation with plan preview
+#   - Stage 2 (terraform-ci.yml): Full CI with signed artifacts post-merge
 #
 # Key Features:
-#   - Zero Azure credentials required
+#   - Azure OIDC authentication (zero static credentials)
 #   - Parallel security scanning (tfsec, Checkov, Trivy)
+#   - Plan preview generation for PR reviews
 #   - SARIF upload to GitHub Security tab
 #   - Configurable security gate (blocking vs. reporting mode)
-#   - Fast execution (~3-5 minutes)
+#   - Fast execution (~4-6 minutes)
+#
+# Azure OIDC Setup:
+#   Federated credential must trust these branches:
+#   - main
+#   - feature/test-pr-security
 # ============================================================================
 
 name: PR Security Check
@@ -77,6 +83,7 @@ permissions:
   contents: read
   pull-requests: write
   security-events: write
+  id-token: write      # Required for Azure OIDC authentication
 
 jobs:
   # ==========================================================================
@@ -123,6 +130,7 @@ jobs:
       contents: read
       security-events: write
       actions: read
+      id-token: write      # Required for Azure OIDC authentication
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-security.yml@main
     with:
       terraform-version: '1.7.0'
@@ -150,7 +158,11 @@ jobs:
       terraform-var-file: 'terraform.tfvars'
       runner-os: 'ubuntu-latest'
     
-    # Note: No Azure secrets required - validation only, no backend access
+    secrets:
+      # Azure OIDC Authentication for plan generation
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 
   # ==========================================================================
@@ -362,24 +374,7 @@ jobs:
             
             Only findings at or above this severity level will cause failures.
             
-            </details>
-            
-            ---
-            
-            ### 🚦 Next Steps
-            
-            ${allPassed === 'true' 
-              ? '✅ **Ready to merge** - All validation and security checks passed.\n\n' +
-                '**Note**: Terraform plan will be generated after merge in the post-merge CI workflow.' 
-              : '❌ **Action required** - Fix security issues before merging:\n\n' +
-                '1. Review findings in the [Security tab](${GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/security/code-scanning)\n' +
-                '2. Address high-priority issues\n' +
-                '3. Push fixes to this PR\n' +
-                '4. Wait for re-validation'}
-            
-            ---
-            
-            <sub>🤖 Automated security validation via [terraform-security.yml](https://github.com/paloitmbb/mbb-tf-workflows) | No Azure credentials required | Plan generation post-merge only</sub>`;
+            </details>`;
             
             // Post comment
             await github.rest.issues.createComment({
