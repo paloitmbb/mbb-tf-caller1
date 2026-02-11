@@ -1,5 +1,5 @@
 # ============================================================================
-# PR Security Check - Lightweight Validation & Security Scanning
+# PR Security Check - Validation & Security Scanning with Plan Preview
 # ============================================================================
 #
 # Purpose: Validates Terraform code and runs security scans on pull requests
@@ -123,6 +123,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      id-token: write       # Required for Azure OIDC authentication (plan preview)
       actions: read
       id-token: write      # Required for Azure OIDC authentication
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-security.yml@main
