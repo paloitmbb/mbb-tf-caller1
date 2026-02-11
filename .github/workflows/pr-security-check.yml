@@ -12,8 +12,7 @@
 # Job Flow:
 #   1. PREPARE → Detect environment from changed file paths
 #   2. VALIDATE-AND-SCAN → Run validation & security scans (terraform-security.yml)
-#   3. SECURITY-GATE → Evaluate results (configurable blocking)
-#   4. COMMENT-PR → Post comprehensive results to PR
+#   3. COMMENT-PR → Post comprehensive results to PR
 #
 # Architecture: Two-stage workflow pattern
 #   - Stage 1 (This workflow): Security validation with plan preview
@@ -24,7 +23,7 @@
 #   - Parallel security scanning (tfsec, Checkov, Trivy)
 #   - Plan preview generation for PR reviews
 #   - SARIF upload to GitHub Security tab
-#   - Configurable security gate (blocking vs. reporting mode)
+#   - PR comments with security findings
 #   - Fast execution (~4-6 minutes)
 #
 # Azure OIDC Setup:
@@ -67,11 +66,6 @@ on:
           - HIGH
           - CRITICAL
         default: 'HIGH'
-      block-on-failure:
-        description: 'Block PR merge on security failures'
-        required: false
-        type: boolean
-        default: false
 
 # Prevent concurrent runs for the same PR
 concurrency:
@@ -166,95 +160,11 @@ jobs:
 
 
   # ==========================================================================
-  # Job 3: SECURITY-GATE - Result Evaluation
-  # ==========================================================================
-  security-gate:
-    name: Security Gate Evaluation
-    needs: [prepare, validate-and-scan]
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-      - name: Evaluate Security Results
-        id: evaluate
-        run: |
-          echo "🚦 Security Gate Evaluation"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          # Get security scan results
-          ALL_PASSED="${{ needs.validate-and-scan.outputs.security-all-passed }}"
-          TFSEC_STATUS="${{ needs.validate-and-scan.outputs.tfsec-status }}"
-          CHECKOV_STATUS="${{ needs.validate-and-scan.outputs.checkov-status }}"
-          TRIVY_STATUS="${{ needs.validate-and-scan.outputs.trivy-status }}"
-          BLOCK_ON_FAILURE="${{ inputs.block-on-failure }}"
-          
-          # Default block-on-failure to true if not set (for PR triggers)
-          if [ -z "$BLOCK_ON_FAILURE" ]; then
-            BLOCK_ON_FAILURE="true"
-          fi
-          
-          echo "📊 Individual Scanner Results:"
-          echo "   tfsec:   ${TFSEC_STATUS}"
-          echo "   Checkov: ${CHECKOV_STATUS}"
-          echo "   Trivy:   ${TRIVY_STATUS}"
-          echo ""
-          echo "Overall Result: ${ALL_PASSED}"
-          echo "Block on Failure: ${BLOCK_ON_FAILURE}"
-          echo ""
-          
-          # Determine exit strategy
-          if [ "${ALL_PASSED}" == "true" ]; then
-            echo "✅ All security scans PASSED"
-            echo "🔓 PR can be merged"
-            exit 0
-          else
-            echo "❌ One or more security scans FAILED"
-            
-            if [ "${BLOCK_ON_FAILURE}" == "true" ]; then
-              echo "🔒 BLOCKING merge - Fix security issues before merging"
-              echo "📊 Review findings in Security tab: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning"
-              exit 1
-            else
-              echo "⚠️  REPORTING mode - Security issues detected but not blocking"
-              echo "📊 Review findings in Security tab: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning"
-              exit 0
-            fi
-          fi
-      
-      - name: Generate Security Summary
-        if: always()
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ## 🔒 Security Gate Results
-          
-          | Scanner | Status |
-          |---------|--------|
-          | **tfsec** | ${{ needs.validate-and-scan.outputs.tfsec-status == 'success' && '✅ Passed' || needs.validate-and-scan.outputs.tfsec-status == 'failure' && '❌ Failed' || '⏭️ Skipped' }} |
-          | **Checkov** | ${{ needs.validate-and-scan.outputs.checkov-status == 'success' && '✅ Passed' || needs.validate-and-scan.outputs.checkov-status == 'failure' && '❌ Failed' || '⏭️ Skipped' }} |
-          | **Trivy** | ${{ needs.validate-and-scan.outputs.trivy-status == 'success' && '✅ Passed' || needs.validate-and-scan.outputs.trivy-status == 'failure' && '❌ Failed' || '⏭️ Skipped' }} |
-          
-          ### Overall Status
-          
-          ${{ needs.validate-and-scan.outputs.security-all-passed == 'true' && '✅ **All security scans PASSED**' || '❌ **Security issues detected**' }}
-          
-          ### 📊 Detailed Findings
-          
-          View detailed security findings in the [Security tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning).
-          
-          ### Configuration
-          
-          - **Environment**: `${{ needs.prepare.outputs.environment }}`
-          - **Severity Threshold**: `${{ inputs.severity || 'HIGH' }}`
-          - **Block on Failure**: `${{ inputs.block-on-failure || 'true' }}`
-          
-          EOF
-
-  # ==========================================================================
-  # Job 4: COMMENT-PR - PR Communication
+  # Job 3: COMMENT-PR - PR Communication
   # ==========================================================================
   comment-pr:
     name: Comment Security Results
-    needs: [prepare, validate-and-scan, security-gate]
+    needs: [prepare, validate-and-scan]
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
     permissions:
@@ -295,8 +205,6 @@ jobs:
             const detectionMethod = '${{ needs.prepare.outputs.detection-method }}';
             const changedPaths = '${{ needs.prepare.outputs.changed-paths }}';
             
-            // Security gate result
-            const gateStatus = '${{ needs.security-gate.result }}';
             const severityThreshold = '${{ inputs.severity || 'HIGH' }}';
             
             // Overall status
