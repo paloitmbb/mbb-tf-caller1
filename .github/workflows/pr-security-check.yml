@@ -121,9 +121,8 @@ jobs:
     permissions:
       contents: read
       security-events: write
-      id-token: write       # Required for Azure OIDC authentication (plan preview)
       actions: read
-      id-token: write      # Required for Azure OIDC authentication
+      id-token: write       # Required for Azure OIDC authentication (plan preview)
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-security.yml@main
     with:
       terraform-version: '1.7.0'
