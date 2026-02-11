@@ -51,6 +51,4 @@ module "storage" {
 
   tags = var.common_tags
 }
-# Test PR security pipeline
-# Test PR security pipeline
-# Test comment for PR security check - Wed Feb 11 15:52:32 +08 2026
+# Test PR security pipeline - Updated workflow comment format

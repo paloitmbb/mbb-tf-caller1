@@ -25,6 +25,36 @@ on:
           - stage
           - prod
         default: 'dev'
+      tfsec-severity:
+        description: 'tfsec minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'CRITICAL'
+      checkov-severity:
+        description: 'Checkov minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'HIGH'
+      trivy-severity:
+        description: 'Trivy minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'HIGH'
 
 # Prevent concurrent runs
 concurrency:
@@ -83,11 +113,11 @@ jobs:
       tflint-version: 'v0.60.0'
       # Security Scanning
       enable-tfsec: true
-      tfsec-severity: 'HIGH'
+      tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
       enable-checkov: true
       enable-trivy: true
-      checkov-severity: 'CRITICAL'
-      trivy-severity: 'MEDIUM'
+      checkov-severity: ${{ inputs.checkov-severity || 'HIGH' }}
+      trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
       # Continue-on-error Control
       # Individual scanners continue to allow all scans to complete
       tfsec-continue-on-error: true
@@ -117,12 +147,30 @@ jobs:
         run: |
           echo "## 🚀 Terraform CI Workflow Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Environment | ${{ needs.prepare.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Working Directory | ${{ needs.prepare.outputs.working-directory }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Plan Exit Code | ${{ needs.validate-and-plan.outputs.plan-exitcode }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Security Scans | ${{ needs.validate-and-plan.outputs.security-all-passed && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status | Severity Threshold |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|-------------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| tfsec | ${{ needs.validate-and-plan.outputs.tfsec-status }} | \`${{ inputs.tfsec-severity || 'CRITICAL' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkov | ${{ needs.validate-and-plan.outputs.checkov-status }} | \`${{ inputs.checkov-severity || 'HIGH' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy | ${{ needs.validate-and-plan.outputs.trivy-status }} | \`${{ inputs.trivy-severity || 'HIGH' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall Result:** ${{ needs.validate-and-plan.outputs.security-all-passed == 'true' && '✅ PASSED' || '❌ FAILED' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Terraform Plan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Exit Code | ${{ needs.validate-and-plan.outputs.plan-exitcode }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | \`${{ needs.validate-and-plan.outputs.plan-artifact-name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Plan Hash | \`${{ needs.validate-and-plan.outputs.plan-hash }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ needs.validate-and-plan.outputs.plan-exitcode }}" == "2" ]; then
@@ -132,10 +180,6 @@ jobs:
             echo "### ✅ No Changes" >> $GITHUB_STEP_SUMMARY
             echo "Infrastructure is up-to-date with the Terraform configuration." >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📦 Plan Artifact: \`${{ needs.validate-and-plan.outputs.plan-artifact-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "🔐 Plan Hash: \`${{ needs.validate-and-plan.outputs.plan-hash }}\`" >> $GITHUB_STEP_SUMMARY
 
 
 
