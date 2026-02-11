@@ -76,8 +76,6 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
-  security-events: write
-  id-token: write      # Required for Azure OIDC authentication
 
 jobs:
   # ==========================================================================
