@@ -273,4 +273,4 @@ az storage account show -n <STORAGE_ACCOUNT> -g <RESOURCE_GROUP>
 
 ## 👥 Team
 
-Platform Engineering Team - MayBank CloudDays Project
+Platform Engineering Team - ProjectAAA

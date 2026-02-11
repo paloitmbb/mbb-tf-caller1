@@ -51,3 +51,4 @@ module "storage" {
 
   tags = var.common_tags
 }
+# Test PR security pipeline - Updated workflow comment format
