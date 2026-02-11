@@ -131,11 +131,14 @@ jobs:
       working-directory: ${{ needs.prepare.outputs.working-directory }}
       environment: ${{ needs.prepare.outputs.environment }}
       
+      # Code Quality Linting
+      enable-tflint: true
+      tflint-version: 'v0.60.0'
+      
       # Enable all security scanners
       enable-tfsec: true
       enable-checkov: true
       enable-trivy: true
-      enable-tflint: true
       
       # Configure severity thresholds
       tfsec-severity: ${{ inputs.severity || 'HIGH' }}
@@ -236,9 +239,9 @@ jobs:
             
             | Check | Status |
             |-------|--------|
-            | **terraform fmt** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
-            | **terraform validate** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
-            | **tflint** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
+            | **Code Quality (tflint)** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
+            
+            > **Note**: Full validation results (fmt, validate, tflint) are available in the workflow logs.
             
             ---
             

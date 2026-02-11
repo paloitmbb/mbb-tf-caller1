@@ -49,26 +49,6 @@ jobs:
       working-directory: ${{ steps.env.outputs.working-directory }}
     
     steps:
-      # ===== OLD APPROACH: Branch-based detection (deprecated) =====
-      # - name: Determine Environment
-      #   id: set-env
-      #   run: |
-      #     if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-      #       ENV="${{ github.event.inputs.environment }}"
-      #     elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
-      #       ENV="prod"
-      #     elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
-      #       ENV="stage"
-      #     else
-      #       ENV="dev"
-      #     fi
-      #     
-      #     echo "environment=${ENV}" >> $GITHUB_OUTPUT
-      #     echo "working-directory=./env/${ENV}" >> $GITHUB_OUTPUT
-      #     echo "🌍 Environment: ${ENV}"
-      #     echo "📁 Working Directory: ./env/${ENV}"
-      
-      # ===== NEW APPROACH: Path-based detection via composite action =====
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -93,7 +73,7 @@ jobs:
       issues: write
       attestations: write
       actions: read
-    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@d700f75f54e168e153f7d9557c50c3ec1fec1532
+    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@main
     with:
       terraform-version: '1.7.0'
       working-directory: ${{ needs.prepare.outputs.working-directory || './env/dev' }}
@@ -109,10 +89,12 @@ jobs:
       checkov-severity: 'CRITICAL'
       trivy-severity: 'MEDIUM'
       # Continue-on-error Control
+      # Individual scanners continue to allow all scans to complete
       tfsec-continue-on-error: true
       checkov-continue-on-error: true
       trivy-continue-on-error: true
-      aggregate-continue-on-error: false  # Fail workflow if security scans fail
+      # Aggregate enforces security gate: fail CI if any scanner fails
+      aggregate-continue-on-error: false
       # Terraform Configuration
       terraform-var-file: 'terraform.tfvars'
       runner-os: 'ubuntu-latest'
