@@ -8,7 +8,7 @@ location    = "eastus"
 common_tags = {
   Environment = "stage"
   ManagedBy   = "Terraform"
-  Project     = "MayBank-CloudDays"
+  Project     = "ProjectAAA"
   CostCenter  = "Engineering"
   Owner       = "DevOps Team"
 }
