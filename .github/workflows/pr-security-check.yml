@@ -56,8 +56,28 @@ on:
           - stage
           - prod
         default: 'dev'
-      severity:
-        description: 'Minimum severity to fail on'
+      tfsec-severity:
+        description: 'tfsec minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'CRITICAL'
+      checkov-severity:
+        description: 'Checkov minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'HIGH'
+      trivy-severity:
+        description: 'Trivy minimum severity to fail on'
         required: false
         type: choice
         options:
@@ -139,9 +159,9 @@ jobs:
       enable-trivy: true
       
       # Configure severity thresholds
-      tfsec-severity: ${{ inputs.severity || 'HIGH' }}
-      checkov-severity: ${{ inputs.severity || 'HIGH' }}
-      trivy-severity: ${{ inputs.severity || 'HIGH' }}
+      tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
+      checkov-severity: ${{ inputs.checkov-severity || 'HIGH' }}
+      trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
       
       # Continue-on-error Control (allow all scans to run for comprehensive reporting)
       tfsec-continue-on-error: true
@@ -206,7 +226,10 @@ jobs:
             const detectionMethod = '${{ needs.prepare.outputs.detection-method }}';
             const changedPaths = '${{ needs.prepare.outputs.changed-paths }}';
             
-            const severityThreshold = '${{ inputs.severity || 'HIGH' }}';
+            // Scanner severity thresholds
+            const tfsecSeverity = '${{ inputs.tfsec-severity || 'CRITICAL' }}';
+            const checkovSeverity = '${{ inputs.checkov-severity || 'HIGH' }}';
+            const trivySeverity = '${{ inputs.trivy-severity || 'HIGH' }}';
             
             // Overall status
             const overallStatus = allPassed === 'true' ? '✅ PASSED' : '❌ FAILED';
@@ -227,7 +250,6 @@ jobs:
             | **Working Directory** | \`${workingDir}\` |
             | **Detection Method** | ${detectionMethod} |
             | **Terraform Version** | ${tfVersion} |
-            | **Severity Threshold** | \`${severityThreshold}\` |
             
             ${changedPaths ? `**Changed Paths**: \`${changedPaths}\`` : ''}
             
@@ -245,45 +267,15 @@ jobs:
             
             ### 🔒 Security Scan Results
             
-            | Tool | Status | Description |
-            |------|--------|-------------|
-            | 🔍 **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | Terraform static analysis security scanner |
-            | 🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | Infrastructure as Code policy checks |
-            | 🔎 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | Vulnerability and misconfiguration scanning |
+            | Tool | Status | Severity Threshold |
+            |------|--------|-------------------|
+            | 🔍 **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | \`${tfsecSeverity}\` |
+            | 🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | \`${checkovSeverity}\` |
+            | 🔎 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | \`${trivySeverity}\` |
             
             ${allPassed === 'true' 
               ? '✅ **All security checks passed!** This PR meets security requirements.' 
-              : '❌ **Security issues detected!** Please review and fix before merging.'}
-            
-            ---
-            
-            <details>
-            <summary>📊 View Detailed Security Findings</summary>
-            
-            ### Where to find detailed results:
-            
-            1. **GitHub Security Tab**: [View Code Scanning Alerts →](${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/security/code-scanning)
-               - SARIF files from tfsec, Checkov, and Trivy are uploaded here
-               - Filter by tool to see specific findings
-               - Review severity levels and affected files
-            
-            2. **Workflow Run**: [View Workflow Logs →](${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
-               - Check individual job logs for detailed scanner output
-               - Review validation and security scan execution details
-            
-            3. **Job Summary**: Check the workflow summary for a quick overview
-            
-            ### Security Scanners:
-            
-            - 🔍 **tfsec**: Terraform-specific static analysis for security misconfigurations
-            - 🛡️ **Checkov**: Policy-as-code with 500+ built-in checks for cloud best practices
-            - 🔎 **Trivy**: Comprehensive vulnerability scanner for IaC and dependencies
-            
-            ### Severity Threshold: \`${severityThreshold}\`
-            
-            Only findings at or above this severity level will cause failures.
-            
-            </details>`;
+              : '❌ **Security issues detected!** Please review and fix before merging.'}`;
             
             // Post comment
             await github.rest.issues.createComment({
