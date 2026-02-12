@@ -38,6 +38,7 @@ override.tf.json
 terraform.rc
 
 # Ignore IDE specific files
+run.sh
 .vscode/
 .devbox/
 .envrc
