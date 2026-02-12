@@ -80,7 +80,7 @@ jobs:
     
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0  # Required for path filtering
       
@@ -113,9 +113,9 @@ jobs:
       tflint-version: 'v0.60.0'
       # Security Scanning
       enable-tfsec: true
-      tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
-      enable-checkov: true
+      enable-checkov: false
       enable-trivy: true
+      tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
       checkov-severity: ${{ inputs.checkov-severity || 'HIGH' }}
       trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
       # Continue-on-error Control

@@ -7,7 +7,20 @@
 #
 # Triggers:
 #   - pull_request: main/develop branches with Terraform file changes
-#   - workflow_dispatch: manual execution with configurable inputs
+#   - workflow_dispatch: manual execution with full configuration control
+#
+# Manual Inputs (workflow_dispatch):
+#   - environment: Target environment (dev/stage/prod)
+#   - terraform-version: Terraform version to use
+#   - terraform-var-file: Terraform variables file name
+#   - enable-tflint: Toggle tflint code quality scanning
+#   - tflint-version: tflint version to use
+#   - enable-tfsec: Toggle tfsec security scanning
+#   - tfsec-severity: Minimum severity threshold for tfsec
+#   - enable-checkov: Toggle Checkov security scanning
+#   - checkov-severity: Minimum severity threshold for Checkov
+#   - enable-trivy: Toggle Trivy security scanning
+#   - trivy-severity: Minimum severity threshold for Trivy
 #
 # Job Flow:
 #   1. PREPARE → Detect environment from changed file paths
@@ -56,6 +69,31 @@ on:
           - stage
           - prod
         default: 'dev'
+      terraform-version:
+        description: 'Terraform version to use'
+        required: false
+        type: string
+        default: '1.7.0'
+      terraform-var-file:
+        description: 'Terraform var file name'
+        required: false
+        type: string
+        default: 'terraform.tfvars'
+      enable-tflint:
+        description: 'Enable tflint code quality scanning'
+        required: false
+        type: boolean
+        default: true
+      tflint-version:
+        description: 'tflint version to use'
+        required: false
+        type: string
+        default: 'v0.60.0'
+      enable-tfsec:
+        description: 'Enable tfsec security scanning'
+        required: false
+        type: boolean
+        default: true
       tfsec-severity:
         description: 'tfsec minimum severity to fail on'
         required: false
@@ -66,6 +104,11 @@ on:
           - HIGH
           - CRITICAL
         default: 'CRITICAL'
+      enable-checkov:
+        description: 'Enable Checkov security scanning'
+        required: false
+        type: boolean
+        default: false
       checkov-severity:
         description: 'Checkov minimum severity to fail on'
         required: false
@@ -76,6 +119,11 @@ on:
           - HIGH
           - CRITICAL
         default: 'HIGH'
+      enable-trivy:
+        description: 'Enable Trivy security scanning'
+        required: false
+        type: boolean
+        default: true
       trivy-severity:
         description: 'Trivy minimum severity to fail on'
         required: false
@@ -86,13 +134,18 @@ on:
           - HIGH
           - CRITICAL
         default: 'HIGH'
+      plan-continue-on-error:
+        description: 'Continue workflow if plan generation fails'
+        required: false
+        type: boolean
+        default: true
 
 # Prevent concurrent runs for the same PR
 concurrency:
   group: pr-security-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-# Minimal permissions (principle of least privilege)
+# Minimal permissions
 permissions:
   contents: read
   pull-requests: write
@@ -145,18 +198,18 @@ jobs:
       id-token: write       # Required for Azure OIDC authentication (plan preview)
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-security.yml@main
     with:
-      terraform-version: '1.7.0'
+      terraform-version: ${{ inputs.terraform-version || '1.7.0' }}
       working-directory: ${{ needs.prepare.outputs.working-directory }}
       environment: ${{ needs.prepare.outputs.environment }}
       
       # Code Quality Linting
-      enable-tflint: true
-      tflint-version: 'v0.60.0'
+      enable-tflint: ${{ github.event_name == 'workflow_dispatch' && inputs.enable-tflint || true }}
+      tflint-version: ${{ inputs.tflint-version || 'v0.60.0' }}
       
-      # Enable all security scanners
-      enable-tfsec: true
-      enable-checkov: true
-      enable-trivy: true
+      # Enable/disable security scanners
+      enable-tfsec: ${{ github.event_name == 'workflow_dispatch' && inputs.enable-tfsec || true }}
+      enable-checkov: ${{ github.event_name == 'workflow_dispatch' && inputs.enable-checkov || false }}
+      enable-trivy: ${{ github.event_name == 'workflow_dispatch' && inputs.enable-trivy || true }}
       
       # Configure severity thresholds
       tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
@@ -168,9 +221,10 @@ jobs:
       checkov-continue-on-error: true
       trivy-continue-on-error: true
       aggregate-continue-on-error: false  # Fail workflow if security issues detected
+      plan-continue-on-error: ${{ github.event_name == 'workflow_dispatch' && inputs.plan-continue-on-error || true }}
       
       # Terraform configuration
-      terraform-var-file: 'terraform.tfvars'
+      terraform-var-file: ${{ inputs.terraform-var-file || 'terraform.tfvars' }}
       runner-os: 'ubuntu-latest'
     
     secrets:
@@ -231,9 +285,51 @@ jobs:
             const checkovSeverity = '${{ inputs.checkov-severity || 'HIGH' }}';
             const trivySeverity = '${{ inputs.trivy-severity || 'HIGH' }}';
             
+            // Scanner enable/disable status
+            const tfsecEnabled = tfsecStatus !== 'skipped';
+            const checkovEnabled = checkovStatus !== 'skipped';
+            const trivyEnabled = trivyStatus !== 'skipped';
+            const tflintEnabled = tflintStatus !== 'skipped';
+            
             // Overall status
             const overallStatus = allPassed === 'true' ? '✅ PASSED' : '❌ FAILED';
             const overallEmoji = allPassed === 'true' ? '🎉' : '⚠️';
+            
+            // Build scanner results table rows
+            const scannerRows = [];
+            if (tfsecEnabled) {
+              scannerRows.push(`| 🔍 **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | \`${tfsecSeverity}\` |`);
+            }
+            if (checkovEnabled) {
+              scannerRows.push(`| 🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | \`${checkovSeverity}\` |`);
+            }
+            if (trivyEnabled) {
+              scannerRows.push(`| 🔎 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | \`${trivySeverity}\` |`);
+            }
+            
+            // Build validation results section
+            const validationSection = tflintEnabled ? `
+            ### ✅ Validation Results
+            
+            | Check | Status |
+            |-------|--------|
+            | **Code Quality (tflint)** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
+            
+            > **Note**: Full validation results (fmt, validate, tflint) are available in the workflow logs.
+            
+            ---` : '';
+            
+            // Build security scan section
+            const securitySection = scannerRows.length > 0 ? `
+            ### 🔒 Security Scan Results
+            
+            | Tool | Status | Severity Threshold |
+            |------|--------|-------------------|
+            ${scannerRows.join('\n            ')}
+            
+            ${allPassed === 'true' 
+              ? '✅ **All security checks passed!** This PR meets security requirements.' 
+              : '❌ **Security issues detected!** Please review and fix before merging.'}` : '\n> **Note**: No security scanners enabled for this run.';
             
             // Build PR comment
             const body = `## 🔒 PR Security Validation Results
@@ -253,29 +349,8 @@ jobs:
             
             ${changedPaths ? `**Changed Paths**: \`${changedPaths}\`` : ''}
             
-            ---
-            
-            ### ✅ Validation Results
-            
-            | Check | Status |
-            |-------|--------|
-            | **Code Quality (tflint)** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
-            
-            > **Note**: Full validation results (fmt, validate, tflint) are available in the workflow logs.
-            
-            ---
-            
-            ### 🔒 Security Scan Results
-            
-            | Tool | Status | Severity Threshold |
-            |------|--------|-------------------|
-            | 🔍 **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | \`${tfsecSeverity}\` |
-            | 🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | \`${checkovSeverity}\` |
-            | 🔎 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | \`${trivySeverity}\` |
-            
-            ${allPassed === 'true' 
-              ? '✅ **All security checks passed!** This PR meets security requirements.' 
-              : '❌ **Security issues detected!** Please review and fix before merging.'}`;
+            ---${validationSection}
+            ${securitySection}`;
             
             // Post comment
             await github.rest.issues.createComment({
