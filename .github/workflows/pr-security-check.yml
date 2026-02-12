@@ -228,7 +228,7 @@ jobs:
       runner-os: 'ubuntu-latest'
       
       # SARIF Upload to Azure Storage (optional - leave empty to skip)
-      sarif-storage-account-name: ''  # e.g., 'mystorageaccount' or use ${{ secrets.SARIF_STORAGE_ACCOUNT }}
+      sarif-storage-account-name: 'ghsttfstatedev001'  # Storage account for SARIF uploads
       sarif-storage-container-name: '${{ needs.prepare.outputs.environment }}-codescanning'  # Dynamic: dev-codescanning, prod-codescanning, etc.
       sarif-storage-destination-path: 'sarif-results/'
     
