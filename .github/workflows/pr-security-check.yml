@@ -226,6 +226,11 @@ jobs:
       # Terraform configuration
       terraform-var-file: ${{ inputs.terraform-var-file || 'terraform.tfvars' }}
       runner-os: 'ubuntu-latest'
+      
+      # SARIF Upload to Azure Storage (optional - leave empty to skip)
+      sarif-storage-account-name: 'ghsttfstatedev001'  # Storage account for SARIF uploads
+      sarif-storage-container-name: '${{ needs.prepare.outputs.environment }}-codescanning'  # Dynamic: dev-codescanning, prod-codescanning, etc.
+      sarif-storage-destination-path: 'sarif-results/'
     
     secrets:
       # Azure OIDC Authentication for plan generation
@@ -271,6 +276,8 @@ jobs:
             const tfsecStatus = '${{ needs.validate-and-scan.outputs.tfsec-status }}';
             const checkovStatus = '${{ needs.validate-and-scan.outputs.checkov-status }}';
             const trivyStatus = '${{ needs.validate-and-scan.outputs.trivy-status }}';
+            const fmtStatus = '${{ needs.validate-and-scan.outputs.fmt-status }}';
+            const validateStatus = '${{ needs.validate-and-scan.outputs.validate-status }}';
             const tflintStatus = '${{ needs.validate-and-scan.outputs.tflint-status }}';
             const tfVersion = '${{ needs.validate-and-scan.outputs.terraform-version }}';
             
@@ -285,39 +292,38 @@ jobs:
             const checkovSeverity = '${{ inputs.checkov-severity || 'HIGH' }}';
             const trivySeverity = '${{ inputs.trivy-severity || 'HIGH' }}';
             
-            // Scanner enable/disable status
-            const tfsecEnabled = tfsecStatus !== 'skipped';
-            const checkovEnabled = checkovStatus !== 'skipped';
-            const trivyEnabled = trivyStatus !== 'skipped';
+            // Validation tool status
             const tflintEnabled = tflintStatus !== 'skipped';
             
             // Overall status
             const overallStatus = allPassed === 'true' ? '✅ PASSED' : '❌ FAILED';
             const overallEmoji = allPassed === 'true' ? '🎉' : '⚠️';
             
-            // Build scanner results table rows
+            // Build scanner results table rows (only show scanners that actually ran)
             const scannerRows = [];
-            if (tfsecEnabled) {
+            
+            // Only add scanners that were enabled and ran (not skipped)
+            if (tfsecStatus && tfsecStatus !== 'skipped') {
               scannerRows.push(`| 🔍 **tfsec** | ${getStatusEmoji(tfsecStatus)} ${getStatusText(tfsecStatus)} | \`${tfsecSeverity}\` |`);
             }
-            if (checkovEnabled) {
+            if (checkovStatus && checkovStatus !== 'skipped') {
               scannerRows.push(`| 🛡️ **Checkov** | ${getStatusEmoji(checkovStatus)} ${getStatusText(checkovStatus)} | \`${checkovSeverity}\` |`);
             }
-            if (trivyEnabled) {
+            if (trivyStatus && trivyStatus !== 'skipped') {
               scannerRows.push(`| 🔎 **Trivy** | ${getStatusEmoji(trivyStatus)} ${getStatusText(trivyStatus)} | \`${trivySeverity}\` |`);
             }
             
             // Build validation results section
-            const validationSection = tflintEnabled ? `
+            const validationSection = `
             ### ✅ Validation Results
             
             | Check | Status |
             |-------|--------|
-            | **Code Quality (tflint)** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |
+            | **Format Check (fmt)** | ${getStatusEmoji(fmtStatus)} ${getStatusText(fmtStatus)} |
+            | **Syntax Check (validate)** | ${getStatusEmoji(validateStatus)} ${getStatusText(validateStatus)} |
+            ${tflintEnabled ? `| **Code Quality (tflint)** | ${getStatusEmoji(tflintStatus)} ${getStatusText(tflintStatus)} |` : ''}
             
-            > **Note**: Full validation results (fmt, validate, tflint) are available in the workflow logs.
-            
-            ---` : '';
+            ---`;
             
             // Build security scan section
             const securitySection = scannerRows.length > 0 ? `
