@@ -129,6 +129,11 @@ jobs:
       terraform-var-file: 'terraform.tfvars'
       runner-os: 'ubuntu-latest'
       timeout-minutes: 60
+      
+      # SARIF Upload to Azure Storage (optional - leave empty to skip)
+      sarif-storage-account-name: 'ghsttfstatedev001'
+      sarif-storage-container-name: '${{ needs.prepare.outputs.environment }}-codescanning'  # Dynamic: dev-codescanning, prod-codescanning, etc.
+      sarif-storage-destination-path: 'sarif-results/'
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
