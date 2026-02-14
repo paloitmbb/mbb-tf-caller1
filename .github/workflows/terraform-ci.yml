@@ -105,7 +105,7 @@ jobs:
       actions: read
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-ci.yml@main
     with:
-      terraform-version: '1.7.0'
+      terraform-version: ${{ vars.TERRAFORM_VERSION || '1.7.0' }}
       working-directory: ${{ needs.prepare.outputs.working-directory || './env/dev' }}
       environment: ${{ needs.prepare.outputs.environment }}
       # Code Quality Scanning
@@ -127,8 +127,7 @@ jobs:
       aggregate-continue-on-error: false
       # Terraform Configuration
       terraform-var-file: 'terraform.tfvars'
-      runner-os: 'ubuntu-latest'
-      timeout-minutes: 60
+      runner-os: ${{ vars.RUNNER_OS || 'ubuntu-latest' }}
       
       # SARIF Upload to Azure Storage (optional - leave empty to skip)
       sarif-storage-account-name: 'ghsttfstatedev001'
