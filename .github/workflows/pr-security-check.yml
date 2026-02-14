@@ -198,7 +198,7 @@ jobs:
       id-token: write       # Required for Azure OIDC authentication (plan preview)
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-security.yml@main
     with:
-      terraform-version: ${{ inputs.terraform-version || '1.7.0' }}
+      terraform-version: ${{ vars.TERRAFORM_VERSION || inputs.terraform-version || '1.7.0' }}
       working-directory: ${{ needs.prepare.outputs.working-directory }}
       environment: ${{ needs.prepare.outputs.environment }}
       
@@ -225,7 +225,7 @@ jobs:
       
       # Terraform configuration
       terraform-var-file: ${{ inputs.terraform-var-file || 'terraform.tfvars' }}
-      runner-os: 'ubuntu-latest'
+      runner-os: ${{ vars.RUNNER_OS || 'ubuntu-latest' }}
       
       # SARIF Upload to Azure Storage (optional - leave empty to skip)
       sarif-storage-account-name: 'ghsttfstatedev001'  # Storage account for SARIF uploads
